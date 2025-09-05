@@ -1,0 +1,126 @@
+name: DIS App CI/CD
+
+on:
+  schedule:
+    - cron: "00 00 * * *"
+  workflow_dispatch:
+
+jobs:
+  build_dis_app:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.GHCR_USERNAME }}
+        password: ${{ secrets.GHCR_TOKEN }}
+
+    - name: Build and tag DIS docker image
+      run: |
+        docker build . \
+          -t ghcr.io/udanawetthasinghe/dis-app:latest \
+          -t ghcr.io/udanawetthasinghe/dis-app:${{ github.sha }}
+
+    - name: Push DIS docker image
+      run: |
+        docker push ghcr.io/udanawetthasinghe/dis-app:latest
+        docker push ghcr.io/udanawetthasinghe/dis-app:${{ github.sha }}
+
+    - name: Build and tag forcast model docker image
+      run: |
+        docker build ./python \
+          -t ghcr.io/udanawetthasinghe/forcast-app:latest \
+          -t ghcr.io/udanawetthasinghe/forcast-app:${{ github.sha }}
+
+    - name: Push forcast docker image
+      run: |
+        docker push ghcr.io/udanawetthasinghe/forcast-app:latest
+        docker push ghcr.io/udanawetthasinghe/forcast-app:${{ github.sha }}
+
+  deploy_to_server:
+    runs-on: ubuntu-latest
+    needs: build_dis_app
+    steps:
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin && cd devops && echo "Pulling latest Docker image..." && docker-compose pull && echo "Stopping and removing old container..." && docker-compose down && echo "Removing all Docker images except 'latest'..." && docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep -v ":latest" | awk '{print $2}' | xargs -r docker rmi && echo "Starting new container..." && docker-compose up -d
+
+  end-to-end-test:
+    runs-on: ubuntu-latest
+    needs: deploy_to_server
+    container:
+      image: cypress/included:11.0.0
+    env:
+      DIS_BASE_URL: ${{ secrets.DIS_BASE_URL }}
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      CYPRESS_CACHE_FOLDER: /tmp/.cache
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Correct Permissions for Cypress Cache
+        run: mkdir -p /tmp/.cache && chmod -R 777 /tmp/.cache
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Cypress End-to-End Tests
+        run: |
+          echo "Running Cypress E2E tests..."
+          npx cypress run
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+          retention-days: 7
+
+  allure-report:
+    runs-on: ubuntu-latest
+    needs: end-to-end-test
+    if: always()
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Install Rsync (Required for Deployment)
+      run: sudo apt-get update && sudo apt-get install -y rsync
+
+    - name: Download Allure Results
+      uses: actions/download-artifact@v4
+      with:
+        name: allure-results
+        path: allure-results
+
+    - name: Install Allure Commandline
+      run: npm install -g allure-commandline
+
+    - name: Generate Allure Report
+      run: allure generate allure-results --clean -o allure-report
+
+    - name: Deploy to GitHub Pages
+      uses: JamesIves/github-pages-deploy-action@v4
+      with:
+        branch: gh-pages
+        folder: allure-report
+        clean: true
