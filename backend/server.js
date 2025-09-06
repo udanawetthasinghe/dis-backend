@@ -14,7 +14,7 @@ import graphsRoutes from './routes/graphsRoutes.js';
 import userGraphsRoutes from './routes/userGraphsRoutes.js';
 import weeklyDngDataRoutes from './routes/weeklyDngDataRoutes.js';
 import feedbackRoutes from './routes/feedbackRoutes.js'
-// Import your routes
+// Import routes
 
 
 import { fileURLToPath } from 'url';
@@ -52,7 +52,7 @@ const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, 'uploads');
 app.use('/uploads', express.static(uploadsPath));
 
 
-// Define your routes
+// Define routes
 app.get('/dengue_risk', (req, res) => {
   // Return JSON data
   res.json({ title: "Dengue Risk Data", data: [] });
