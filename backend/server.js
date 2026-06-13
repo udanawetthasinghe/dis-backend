@@ -42,7 +42,7 @@ app.use(express.urlencoded({ extended: true }));
 // CORS Middleware
 app.use(cookieParser());
 app.use(cors({
-  origin: 'http://localhost:3000',  
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true,                // Allow cookies (e.g.,  JWT) to be sent/received
 }));
 
